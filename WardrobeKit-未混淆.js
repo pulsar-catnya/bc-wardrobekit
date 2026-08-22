@@ -126,7 +126,7 @@ const WKStore = {
 			this._lastDiskRaw = raw;
 			if (raw) {
 				try {
-					const s = JSON.parse(raw);
+					const s = WKParseRaw(raw);
 					if (s && typeof s === "object") this.state = this.normalize(s);
 				} catch (e) { }
 			}
@@ -144,7 +144,7 @@ const WKStore = {
 			this._lastDiskRaw = raw;
 			if (raw) {
 				try {
-					const disk = JSON.parse(raw);
+					const disk = WKParseRaw(raw);
 					if (disk && typeof disk === "object") {
 						if (WKMergeInto(this.state, disk)) WKUI.dirty = true;
 					}
@@ -153,7 +153,11 @@ const WKStore = {
 		}
 		if (!this._dirty) return false;
 		let json;
-		try { json = JSON.stringify(this.state); } catch (e) { return false; }
+		try { json = WKSerializeState(this.state); } catch (e) { return false; }
+		if (!json) {
+			 
+			try { json = JSON.stringify(this.state); } catch (e) { return false; }
+		}
 		if (json === this._lastWritten) return false;
 		this._lastWritten = json;
 		this._lastDiskRaw = json;
@@ -211,6 +215,246 @@ function WKMergeInto(target, disk) {
 		}
 	}
 	return changed;
+}
+
+ 
+
+ 
+function WKCompressUTF16(input) {
+	if (input === null || input === undefined) return "";
+	if (input === "") return "";
+	const dictionary = new Map();
+	let nextCode = 3;
+	const data = [];
+	let dataVal = 0, dataPos = 0;
+	const writeBit = (b) => {
+		dataVal = (dataVal << 1) | (b & 1);
+		if (dataPos === 15) { dataPos = 0; data.push(dataVal); dataVal = 0; }
+		else dataPos++;
+	};
+	const writeCodeLSB = (v, bits) => {
+		for (let i = 0; i < bits; i++) { writeBit(v & 1); v = v >> 1; }
+	};
+	const bitsFor = (n) => {
+		let b = 3;
+		while ((1 << b) <= n) b++;
+		return b;
+	};
+	const emitEntry = (w) => {
+		if (w === "") return;
+		if (w.length === 1) {
+			const ch = w.charCodeAt(0);
+			if (ch < 256) { writeCodeLSB(0, bitsFor(nextCode)); writeCodeLSB(ch, 8); }
+			else { writeCodeLSB(1, bitsFor(nextCode)); writeCodeLSB(ch, 16); }
+		} else {
+			writeCodeLSB(dictionary.get(w), bitsFor(nextCode));
+		}
+	};
+	let w = "";
+	for (let i = 0; i < input.length; i++) {
+		const c = input.charAt(i);
+		const wc = w + c;
+		if (wc.length > 1 && dictionary.has(wc)) {
+			w = wc;
+		} else {
+			emitEntry(w);
+			if (wc.length > 1) dictionary.set(wc, nextCode++);
+			w = c;
+		}
+	}
+	emitEntry(w);
+	writeCodeLSB(2, bitsFor(nextCode));
+	 
+	while (true) {
+		dataVal = (dataVal << 1);
+		if (dataPos === 15) { data.push(dataVal); break; }
+		dataPos++;
+	}
+	let out = "";
+	for (let i = 0; i < data.length; i++) out += String.fromCharCode(data[i]);
+	return out;
+}
+
+ 
+function WKDecompressUTF16(input) {
+	if (input === null || input === undefined) return "";
+	if (input === "") return "";
+	const dictionary = [];
+	let nextCode = 3;
+	let w = "";
+	const result = [];
+	const data = { val: input, pos: 0, idx: 0x8000 };
+	const readBit = () => {
+		const r = (data.val.charCodeAt(data.pos) & data.idx) > 0 ? 1 : 0;
+		data.idx = data.idx >> 1;
+		if (data.idx === 0) { data.idx = 0x8000; data.pos++; }
+		return r;
+	};
+	const readCodeLSB = (bits) => {
+		let v = 0;
+		for (let i = 0; i < bits; i++) v |= readBit() << i;
+		return v;
+	};
+	const bitsFor = (n) => {
+		let b = 3;
+		while ((1 << b) <= n) b++;
+		return b;
+	};
+	while (true) {
+		 
+		const code = readCodeLSB(bitsFor(nextCode + 1));
+		if (code === 2) return result.join("");
+		let entry;
+		if (code === 0) entry = String.fromCharCode(readCodeLSB(8));
+		else if (code === 1) entry = String.fromCharCode(readCodeLSB(16));
+		else if (code < nextCode) entry = dictionary[code];
+		else if (code === nextCode) entry = w + w.charAt(0);
+		else return null;
+		result.push(entry);
+		if (w !== "") dictionary[nextCode++] = w + entry.charAt(0);
+		w = entry;
+	}
+}
+
+ 
+function WKItemCompactOf(it) {
+	if (!it || typeof it !== "object") return [null, null];
+	const a = [it.Group, it.Name, it.Color !== undefined ? it.Color : null];
+	if (it.Property !== undefined && it.Property !== null && typeof it.Property === "object" && Object.keys(it.Property).length > 0) {
+		a.push("P", it.Property);
+	}
+	if (it.Craft !== undefined) a.push("C", it.Craft);
+	return a;
+}
+
+function WKItemExpandOf(a) {
+	if (!Array.isArray(a) || a.length < 2) return null;
+	const it = { Group: a[0], Name: a[1] };
+	if (a.length > 2 && a[2] !== null) it.Color = a[2];
+	for (let i = 3; i < a.length; i++) {
+		if (a[i] === "P" && i + 1 < a.length) { it.Property = a[i + 1]; i++; }
+		else if (a[i] === "C" && i + 1 < a.length) { it.Craft = a[i + 1]; i++; }
+	}
+	return it;
+}
+
+ 
+function WKSerializeState(state) {
+	try {
+		const pool = [];
+		const poolIdx = new Map();
+		const intern = (item) => {
+			if (!item || typeof item !== "object") return -1;
+			const key = JSON.stringify(item);
+			let idx = poolIdx.get(key);
+			if (idx === undefined) {
+				idx = pool.length;
+				poolIdx.set(key, idx);
+				pool.push(WKItemCompactOf(item));
+			}
+			return idx;
+		};
+		const chars = {};
+		for (const key of Object.keys(state.chars || {})) {
+			const c = state.chars[key];
+			if (!c || typeof c !== "object") continue;
+			chars[key] = {
+				n: c.name || "",
+				k: c.nick || "",
+				u: c.cursor | 0,
+				l: c.last || 0,
+				h: (c.history || []).map(e => [
+					e.t, e.label,
+					e.chip || null,
+					(e.appearance || []).map(intern),
+				]),
+			};
+		}
+		const compact = {
+			v: 2,
+			s: state.settings || {},
+			p: (state.palette || []).map(e => [e.hex, e.t, e.src === "manual" ? 1 : 0]),
+			c: chars,
+			pool,
+			u: (state.cur !== null && state.cur !== undefined) ? state.cur : null,
+		};
+		let json;
+		try { json = JSON.stringify(compact); } catch (e) { return null; }
+		try {
+			const comp = WKCompressUTF16(json);
+			if (comp && comp.length < json.length) return "WKZ1" + comp;
+		} catch (e) { }
+		return "WKJ1" + json;
+	} catch (e) {
+		WKErr("存储序列化失败", e);
+		return null;
+	}
+}
+
+ 
+function WKExpandCompact(compact) {
+	if (!compact || typeof compact !== "object") return null;
+	const pool = Array.isArray(compact.pool) ? compact.pool.map(WKItemExpandOf) : [];
+	const chars = {};
+	for (const key of Object.keys(compact.c || {})) {
+		const c = compact.c[key];
+		if (!c || typeof c !== "object") continue;
+		const history = (Array.isArray(c.h) ? c.h : []).map(e => {
+			const items = [];
+			if (Array.isArray(e) && Array.isArray(e[3])) {
+				for (const idx of e[3]) {
+					if (Number.isInteger(idx) && idx >= 0 && idx < pool.length && pool[idx]) items.push(pool[idx]);
+				}
+			}
+			const appearance = items;
+			return {
+				t: (Array.isArray(e) && typeof e[0] === "number") ? e[0] : WKNow(),
+				label: (Array.isArray(e) && typeof e[1] === "string") ? e[1] : WKT("stepAdjust"),
+				chip: (Array.isArray(e) && typeof e[2] === "string") ? e[2] : null,
+				appearance,
+				hash: WKHashOf(appearance),
+			};
+		});
+		chars[key] = {
+			num: Number(key),
+			name: typeof c.n === "string" ? c.n : "",
+			nick: typeof c.k === "string" ? c.k : "",
+			history,
+			cursor: c.u | 0,
+			last: c.l || 0,
+		};
+	}
+	return {
+		v: 1,
+		settings: (compact.s && typeof compact.s === "object") ? compact.s : {},
+		palette: (Array.isArray(compact.p) ? compact.p : []).map(e => ({
+			hex: Array.isArray(e) ? e[0] : null,
+			t: (Array.isArray(e) && typeof e[1] === "number") ? e[1] : WKNow(),
+			src: (Array.isArray(e) && e[2] === 1) ? "manual" : "auto",
+		})),
+		chars,
+		cur: (compact.u !== null && compact.u !== undefined) ? compact.u : null,
+	};
+}
+
+ 
+function WKParseRaw(raw) {
+	if (typeof raw !== "string" || !raw) return null;
+	if (raw.indexOf("WKZ1") === 0) {
+		try {
+			const json = WKDecompressUTF16(raw.slice(4));
+			if (json === null || json === "") return null;
+			return WKExpandCompact(JSON.parse(json));
+		} catch (e) { WKErr("解压存储失败", e); return null; }
+	}
+	if (raw.indexOf("WKJ1") === 0) {
+		try { return WKExpandCompact(JSON.parse(raw.slice(4))); } catch (e) { return null; }
+	}
+	try {
+		const s = JSON.parse(raw);
+		if (s && typeof s === "object") return s;
+	} catch (e) { }
+	return null;
 }
 
  
@@ -3178,7 +3422,7 @@ function WKExposeAPI() {
 		Close: WardrobeKitClose,
 		Toggle: WardrobeKitToggle,
 		IsOpen: () => WKUI.open,
-		Version: () => "1.4.6",
+		Version: () => "1.4.7",
 		State: () => WKStore.load(),
 		Target: () => {
 			const C = WKEditTargetChar();
@@ -3249,7 +3493,7 @@ function WKMain() {
 			const mod = bcModSdk.registerMod({
 				name: "WardrobeKit",
 				fullName: "WardrobeKit — 衣柜调色便捷工具",
-				version: "1.4.6",
+				version: "1.4.7",
 				repository: "",
 			}, { allowReplace: true });
 			WKStore.load();
@@ -3273,7 +3517,7 @@ function WKMain() {
 				}
 			} catch (e) { }
 
-			WKLog("已加载 v1.4.6。聊天室输入 /wk 开关浮窗；控制台可用 WardrobeKitToggle() / window.WardrobeKit 等接口");
+			WKLog("已加载 v1.4.7。聊天室输入 /wk 开关浮窗；控制台可用 WardrobeKitToggle() / window.WardrobeKit 等接口");
 		} catch (e) {
 			WKErr("注册 mod 失败", e);
 		}
@@ -3293,6 +3537,8 @@ if (typeof window !== "undefined" && typeof window.document !== "undefined") {
 if (typeof module !== "undefined" && module.exports) {
 	module.exports = {
 		WKStore, WKMergeInto, WKDeepClone,
+		WKSerializeState, WKExpandCompact, WKParseRaw, WKCompressUTF16, WKDecompressUTF16,
+		WKItemCompactOf, WKItemExpandOf,
 		WKNormalizeColor, WKHexOf, WKColorPattern,
 		WKPaletteAdd, WKPaletteRemove, WKPaletteClear, WKPaletteList,
 		WKRecordCurrentColors, WKCurrentColorValues, WKPaletteAutoRecord,
