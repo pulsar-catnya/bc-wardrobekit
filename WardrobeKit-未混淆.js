@@ -472,13 +472,30 @@ function WKCurrentNum() {
 	return null;
 }
 
+ 
 function WKWardrobeOpen() {
-	try { return typeof CurrentScreen !== "undefined" && CurrentScreen === "Appearance"; } catch (e) { return false; }
+	try {
+		if (typeof CurrentScreen === "undefined") return false;
+		return CurrentScreen === "Appearance" || CurrentScreen === "Wardrobe";
+	} catch (e) { return false; }
+}
+
+ 
+function WKWardrobeScreenTarget() {
+	try {
+		if (typeof CurrentScreen === "undefined" || CurrentScreen !== "Wardrobe") return null;
+		if (typeof Wardrobe !== "undefined" && Wardrobe && WKIsPlayerLike(Wardrobe.selectedCharacter)) {
+			return Wardrobe.selectedCharacter;
+		}
+	} catch (e) { }
+	return null;
 }
 
  
 function WKEditTargetChar() {
 	if (WKWardrobeOpen()) {
+		const wt = WKWardrobeScreenTarget();
+		if (wt) return wt;
 		try {
 			if (typeof CharacterAppearanceSelection !== "undefined" && WKIsPlayerLike(CharacterAppearanceSelection)) {
 				return CharacterAppearanceSelection;
@@ -3416,7 +3433,7 @@ function WKExposeAPI() {
 		Close: WardrobeKitClose,
 		Toggle: WardrobeKitToggle,
 		IsOpen: () => WKUI.open,
-		Version: () => "1.4.10",
+		Version: () => "1.4.11",
 		State: () => WKStore.load(),
 		Target: () => {
 			const C = WKEditTargetChar();
@@ -3487,7 +3504,7 @@ function WKMain() {
 			const mod = bcModSdk.registerMod({
 				name: "WardrobeKit",
 				fullName: "WardrobeKit — 衣柜调色便捷工具",
-				version: "1.4.10",
+				version: "1.4.11",
 				repository: "",
 			}, { allowReplace: true });
 			WKStore.load();
@@ -3511,7 +3528,7 @@ function WKMain() {
 				}
 			} catch (e) { }
 
-			WKLog("已加载 v1.4.10。聊天室输入 /wk 开关浮窗；控制台可用 WardrobeKitToggle() / window.WardrobeKit 等接口");
+			WKLog("已加载 v1.4.11。聊天室输入 /wk 开关浮窗；控制台可用 WardrobeKitToggle() / window.WardrobeKit 等接口");
 		} catch (e) {
 			WKErr("注册 mod 失败", e);
 		}
@@ -3542,7 +3559,7 @@ if (typeof module !== "undefined" && module.exports) {
 		WKAppearanceBundleOf, WKHashOf, WKSanitizeBundle,
 		WKIsVolatileKey, WKIsVolatileValue, WKVolatilePropKeys, WKVolatilePropPatterns,
 		WKVolatileKeepKeys, WKExtraVolatileKeys, WKVolatileSnapshotOf, WKRestoreVolatileKeys,
-		WKEditTargetChar, WKWardrobeOpen, WKIsPlayerLike, WKCurrentNum, WKCharObjectOf,
+		WKEditTargetChar, WKWardrobeOpen, WKWardrobeScreenTarget, WKIsPlayerLike, WKCurrentNum, WKCharObjectOf,
 		WKTargetName, WKGameCharDisplayName, WKItemDisplayName, WKGroupDisplayName,
 		WKItemWatchStart, WKItemWatchStop, WKItemWatchTick, WKItemWatchRebaseline, WKState,
 		WKColorItemName, WKColorChangedIndices, WKLayerLabelOf, WKItemLayerLabel,
