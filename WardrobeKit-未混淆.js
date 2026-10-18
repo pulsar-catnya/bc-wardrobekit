@@ -695,6 +695,21 @@ function WKRelinkItemColor(C) {
 				ItemColorState.opacity[i] = fresh.Property.Opacity[i];
 			}
 		}
+		
+
+ 
+		if (Array.isArray(ItemColorState.initialColors)) {
+			for (let i = 0; i < ItemColorState.initialColors.length; i++) {
+				ItemColorState.initialColors[i] = (Array.isArray(fresh.Color) && i < fresh.Color.length)
+					? fresh.Color[i]
+					: (fresh.Asset && Array.isArray(fresh.Asset.DefaultColor) ? fresh.Asset.DefaultColor[i] : undefined);
+			}
+		}
+		if (Array.isArray(ItemColorState.initialOpacity) && fresh.Property && Array.isArray(fresh.Property.Opacity)) {
+			for (let i = 0; i < ItemColorState.initialOpacity.length && i < fresh.Property.Opacity.length; i++) {
+				ItemColorState.initialOpacity[i] = fresh.Property.Opacity[i];
+			}
+		}
 	} catch (e) { WKErr("选色器状态重链接失败", e); }
 }
 
@@ -3433,7 +3448,7 @@ function WKExposeAPI() {
 		Close: WardrobeKitClose,
 		Toggle: WardrobeKitToggle,
 		IsOpen: () => WKUI.open,
-		Version: () => "1.4.11",
+		Version: () => "1.4.12",
 		State: () => WKStore.load(),
 		Target: () => {
 			const C = WKEditTargetChar();
@@ -3504,7 +3519,7 @@ function WKMain() {
 			const mod = bcModSdk.registerMod({
 				name: "WardrobeKit",
 				fullName: "WardrobeKit — 衣柜调色便捷工具",
-				version: "1.4.11",
+				version: "1.4.12",
 				repository: "",
 			}, { allowReplace: true });
 			WKStore.load();
@@ -3528,7 +3543,7 @@ function WKMain() {
 				}
 			} catch (e) { }
 
-			WKLog("已加载 v1.4.11。聊天室输入 /wk 开关浮窗；控制台可用 WardrobeKitToggle() / window.WardrobeKit 等接口");
+			WKLog("已加载 v1.4.12。聊天室输入 /wk 开关浮窗；控制台可用 WardrobeKitToggle() / window.WardrobeKit 等接口");
 		} catch (e) {
 			WKErr("注册 mod 失败", e);
 		}
